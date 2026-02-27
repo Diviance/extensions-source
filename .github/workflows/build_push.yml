@@ -135,6 +135,8 @@ jobs:
           python ./.github/scripts/create-repo.py
 
       - name: Checkout repo branch
+        id: checkout_repo
+        continue-on-error: true
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ env.OUTPUT_REPOSITORY }}
@@ -143,6 +145,37 @@ jobs:
           path: repo
           persist-credentials: true
 
+      - name: Bootstrap output repo branch
+        if: ${{ steps.checkout_repo.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          set -e
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${{ env.OUTPUT_REPOSITORY }}.git" repo || true
+          cd repo
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git checkout --orphan "${{ env.OUTPUT_BRANCH }}"
+          mkdir -p apk icon
+          echo "[]" > index.json
+          echo "[]" > index.min.json
+          cat > index.html <<'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+          <meta charset="UTF-8">
+          <title>apks</title>
+          </head>
+          <body>
+          <pre>
+          </pre>
+          </body>
+          </html>
+          EOF
+          git add .
+          git commit -m "Initialize extensions repo index"
+          git push origin "${{ env.OUTPUT_BRANCH }}"
+
       - name: Merge and deploy repo
         env:
           DELETE: ${{ needs.prepare.outputs.delete }}
@@ -150,4 +183,3 @@ jobs:
           cd repo
           python ../main/.github/scripts/merge-repo.py "$DELETE"
           ../main/.github/scripts/commit-repo.sh
-

@@ -6,24 +6,34 @@ import shutil
 
 REMOTE_REPO: Path = Path.cwd()
 LOCAL_REPO: Path = REMOTE_REPO.parent.joinpath("main/repo")
+REMOTE_APK_DIR: Path = REMOTE_REPO.joinpath("apk")
+REMOTE_ICON_DIR: Path = REMOTE_REPO.joinpath("icon")
+REMOTE_INDEX_PATH: Path = REMOTE_REPO.joinpath("index.json")
 
 to_delete: list[str] = json.loads(sys.argv[1])
+
+# Bootstrap first publish for a new, empty output repository.
+REMOTE_APK_DIR.mkdir(parents=True, exist_ok=True)
+REMOTE_ICON_DIR.mkdir(parents=True, exist_ok=True)
 
 for module in to_delete:
     apk_name = f"tachiyomi-{module}-v*.*.*.apk"
     icon_name = f"eu.kanade.tachiyomi.extension.{module}.png"
-    for file in REMOTE_REPO.joinpath("apk").glob(apk_name):
+    for file in REMOTE_APK_DIR.glob(apk_name):
         print(file.name)
         file.unlink(missing_ok=True)
-    for file in REMOTE_REPO.joinpath("icon").glob(icon_name):
+    for file in REMOTE_ICON_DIR.glob(icon_name):
         print(file.name)
         file.unlink(missing_ok=True)
 
-shutil.copytree(src=LOCAL_REPO.joinpath("apk"), dst=REMOTE_REPO.joinpath("apk"), dirs_exist_ok = True)
-shutil.copytree(src=LOCAL_REPO.joinpath("icon"), dst=REMOTE_REPO.joinpath("icon"), dirs_exist_ok = True)
+shutil.copytree(src=LOCAL_REPO.joinpath("apk"), dst=REMOTE_APK_DIR, dirs_exist_ok=True)
+shutil.copytree(src=LOCAL_REPO.joinpath("icon"), dst=REMOTE_ICON_DIR, dirs_exist_ok=True)
 
-with REMOTE_REPO.joinpath("index.json").open() as remote_index_file:
-    remote_index = json.load(remote_index_file)
+if REMOTE_INDEX_PATH.exists():
+    with REMOTE_INDEX_PATH.open() as remote_index_file:
+        remote_index = json.load(remote_index_file)
+else:
+    remote_index = []
 
 with LOCAL_REPO.joinpath("index.min.json").open() as local_index_file:
     local_index = json.load(local_index_file)
@@ -35,7 +45,7 @@ index = [
 index.extend(local_index)
 index.sort(key=lambda x: x["pkg"])
 
-with REMOTE_REPO.joinpath("index.json").open("w", encoding="utf-8") as index_file:
+with REMOTE_INDEX_PATH.open("w", encoding="utf-8") as index_file:
     json.dump(index, index_file, ensure_ascii=False, indent=2)
 
 for item in index:
