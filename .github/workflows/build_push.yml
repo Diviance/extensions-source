@@ -21,7 +21,7 @@ concurrency:
 env:
   CI_CHUNK_SIZE: 65
   IS_PR_CHECK: false
-  SOURCE_REPOSITORY: Diviance/MangaVault
+  SOURCE_REPOSITORY: Diviance/extensions-source
   OUTPUT_REPOSITORY: Diviance/extensions
   OUTPUT_BRANCH: main
   INSPECTOR_REPOSITORY: keiyoushi/extensions-inspector
@@ -77,13 +77,45 @@ jobs:
           cache-read-only: ${{ matrix.chunk.number > 1 }}
 
       - name: Prepare signing key
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
         run: |
-          echo ${{ secrets.SIGNING_KEY }} | base64 -d > signingkey.jks
+          set -euo pipefail
+          if [[ -z "${SIGNING_KEY}" ]]; then
+            echo "::error title=Missing secret::SIGNING_KEY is empty"
+            exit 1
+          fi
+          printf '%s' "${SIGNING_KEY}" | base64 --decode > signingkey.jks
+
+      - name: Validate signing key
+        env:
+          ALIAS: ${{ secrets.ALIAS || secrets.KEY_ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          for var in ALIAS KEY_STORE_PASSWORD KEY_PASSWORD; do
+            if [[ -z "${!var}" ]]; then
+              echo "::error title=Missing secret::${var} is empty"
+              exit 1
+            fi
+          done
+
+          if ! keytool -list -keystore signingkey.jks -storepass "${KEY_STORE_PASSWORD}" > /dev/null 2>&1; then
+            echo "::error title=Invalid signing key::Could not open signingkey.jks with KEY_STORE_PASSWORD"
+            exit 1
+          fi
+
+          if ! keytool -list -keystore signingkey.jks -storepass "${KEY_STORE_PASSWORD}" -alias "${ALIAS}" > /dev/null 2>&1; then
+            echo "::error title=Invalid key alias::ALIAS not found in signingkey.jks"
+            exit 1
+          fi
 
       - name: Build extensions (${{ matrix.chunk.number }})
         env:
           MODULES: ${{ join(matrix.chunk.modules, ' ') }}
-          ALIAS: ${{ secrets.ALIAS }}
+          ALIAS: ${{ secrets.ALIAS || secrets.KEY_ALIAS }}
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
@@ -91,7 +123,7 @@ jobs:
 
       - name: Upload APKs (${{ matrix.chunk.number }})
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        if: ${{ github.repository == 'Diviance/MangaVault' }}
+        if: ${{ github.repository == env.SOURCE_REPOSITORY }}
         with:
           name: "individual-apks-${{ matrix.chunk.number }}"
           path: "**/*.apk"
@@ -103,7 +135,7 @@ jobs:
   publish:
     name: Publish extension repo
     needs: [prepare, build]
-    if: ${{ github.repository == 'Diviance/MangaVault' }}
+    if: ${{ github.repository == env.SOURCE_REPOSITORY }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
