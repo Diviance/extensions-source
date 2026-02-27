@@ -73,7 +73,7 @@ jobs:
 
       - name: Upload APKs (${{ matrix.chunk.number }})
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        if: ${{ github.repository == env.SOURCE_REPOSITORY }}
+        if: ${{ github.repository == 'Diviance/extensions-source' }}
         with:
           name: "individual-apks-${{ matrix.chunk.number }}"
           path: "**/*.apk"
@@ -82,7 +82,7 @@ jobs:
   inspect:
     name: Inspect extensions
     needs: [prepare, build]
-    if: ${{ github.repository == env.SOURCE_REPOSITORY }}
+    if: ${{ github.repository == 'Diviance/extensions-source' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
