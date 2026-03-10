@@ -193,9 +193,11 @@ open class MangaVault(private val suffix: String = "") :
         return MangasPage(data.content.map { it.toSManga(baseUrl) }, !data.last)
     }
 
-    override fun getMangaUrl(manga: SManga) = manga.url.replace("/api/v1/catalog", "")
+    override fun getMangaUrl(manga: SManga) = manga.url
+        .replace("/api/v1/catalog", "")
+        .replace("/api/v1", "")
 
-    override fun mangaDetailsRequest(manga: SManga) = GET(manga.url, headers)
+    override fun mangaDetailsRequest(manga: SManga) = GET(manga.url.toCatalogApiUrl(), headers)
 
     override fun mangaDetailsParse(response: Response): SManga = if (response.isFromReadList()) {
         response.parseAs<ReadListDto>().toSManga(baseUrl)
@@ -211,8 +213,8 @@ open class MangaVault(private val suffix: String = "") :
     override fun getChapterUrl(chapter: SChapter) = chapter.url.replace("/api/v1/catalog/books", "/book")
 
     override fun chapterListRequest(manga: SManga): Request = when {
-        manga.url.isFromBook() -> GET("${manga.url}?unpaged=true&media_status=READY&deleted=false", headers)
-        else -> GET("${manga.url}/books?unpaged=true&media_status=READY&deleted=false", headers)
+        manga.url.isFromBook() -> GET("${manga.url.toCatalogApiUrl()}?unpaged=true&media_status=READY&deleted=false", headers)
+        else -> GET("${manga.url.toCatalogApiUrl()}/books?unpaged=true&media_status=READY&deleted=false", headers)
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
@@ -510,9 +512,16 @@ open class MangaVault(private val suffix: String = "") :
         }
     }
 
-    fun String.isFromReadList() = contains("/api/v1/catalog/readlists")
+    fun String.isFromReadList() = contains("/api/v1/catalog/readlists") || contains("/api/v1/readlists")
 
     fun String.isFromBook() = contains("/api/v1/catalog/books")
+
+    fun String.toCatalogApiUrl() = when {
+        contains("/api/v1/catalog/") -> this
+        contains("/api/v1/series/") -> replace("/api/v1/series/", "/api/v1/catalog/series/")
+        contains("/api/v1/readlists/") -> replace("/api/v1/readlists/", "/api/v1/catalog/readlists/")
+        else -> this
+    }
 
     fun Response.isFromReadList() = request.url.toString().isFromReadList()
 

@@ -28,8 +28,8 @@ class SeriesDto(
 ) : ConvertibleToSManga {
     override fun toSManga(baseUrl: String) = SManga.create().apply {
         title = metadata.title
-        url = "$baseUrl/api/v1/catalog/series/$id"
-        thumbnail_url = "$url/thumbnail"
+        url = "$baseUrl/api/v1/series/$id"
+        thumbnail_url = "$baseUrl/api/v1/catalog/series/$id/thumbnail"
         status = when {
             metadata.status == "ENDED" && metadata.totalBookCount != null && booksCount < metadata.totalBookCount -> SManga.PUBLISHING_FINISHED
             metadata.status == "ENDED" -> SManga.COMPLETED
@@ -196,8 +196,8 @@ class ReadListDto(
     override fun toSManga(baseUrl: String) = SManga.create().apply {
         title = name
         description = summary
-        url = "$baseUrl/api/v1/catalog/readlists/$id"
-        thumbnail_url = "$url/thumbnail"
+        url = "$baseUrl/api/v1/readlists/$id"
+        thumbnail_url = "$baseUrl/api/v1/catalog/readlists/$id/thumbnail"
         status = SManga.UNKNOWN
     }
 }
