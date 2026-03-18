@@ -1,1 +1,1 @@
-Source code for private, unreleased app for manga.
+Source code for private, unreleased Mihon extension for private, unreleased app for manga.
