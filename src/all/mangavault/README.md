@@ -28,4 +28,4 @@ if your MangaVault server version supports Divina-compatible EPUB handling.
 
 ### How do I add my MangaVault server to the app?
 Go into the settings of the MangaVault extension (under Browse -> Extensions) and fill in your server
-address and login details.
+address.

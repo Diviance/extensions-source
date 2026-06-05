@@ -9,10 +9,12 @@ import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.AppInfo
 import eu.kanade.tachiyomi.extension.all.mangavault.dto.AuthorDto
-import eu.kanade.tachiyomi.extension.all.mangavault.dto.BookDto
 import eu.kanade.tachiyomi.extension.all.mangavault.dto.CollectionDto
 import eu.kanade.tachiyomi.extension.all.mangavault.dto.LibraryDto
-import eu.kanade.tachiyomi.extension.all.mangavault.dto.PageDto
+import eu.kanade.tachiyomi.extension.all.mangavault.dto.MihonChapterDto
+import eu.kanade.tachiyomi.extension.all.mangavault.dto.MihonFilterOptionsDto
+import eu.kanade.tachiyomi.extension.all.mangavault.dto.MihonHealthDto
+import eu.kanade.tachiyomi.extension.all.mangavault.dto.MihonPageDto
 import eu.kanade.tachiyomi.extension.all.mangavault.dto.PageWrapperDto
 import eu.kanade.tachiyomi.extension.all.mangavault.dto.ReadListDto
 import eu.kanade.tachiyomi.extension.all.mangavault.dto.SeriesDto
@@ -33,7 +35,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import okhttp3.Credentials
 import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -75,12 +76,6 @@ open class MangaVault(private val suffix: String = "") :
         (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
     }
 
-    private val username by lazy { preferences.getString(PREF_USERNAME, "")!! }
-
-    private val password by lazy { preferences.getString(PREF_PASSWORD, "")!! }
-
-    private val apiKey by lazy { preferences.getString(PREF_API_KEY, "")!! }
-
     private val defaultLibraries
         get() = preferences.getStringSet(PREF_DEFAULT_LIBRARIES, emptySet())!!
 
@@ -88,23 +83,9 @@ open class MangaVault(private val suffix: String = "") :
 
     override fun headersBuilder() = super.headersBuilder()
         .set("User-Agent", "TachiyomiMangaVault/${AppInfo.getVersionName()}")
-        .also { builder ->
-            if (apiKey.isNotBlank()) {
-                builder.set("X-API-Key", apiKey)
-            }
-        }
 
     override val client: OkHttpClient =
         network.cloudflareClient.newBuilder()
-            .authenticator { _, response ->
-                if (apiKey.isNotBlank() || response.request.header("Authorization") != null) {
-                    null // Give up if API key is set or we've already failed to authenticate.
-                } else {
-                    response.request.newBuilder()
-                        .addHeader("Authorization", Credentials.basic(username, password))
-                        .build()
-                }
-            }
             .dns(Dns.SYSTEM) // don't use DNS over HTTPS as it breaks IP addressing
             .build()
 
@@ -136,11 +117,11 @@ open class MangaVault(private val suffix: String = "") :
         val type = when {
             collectionId != null -> "collections/$collectionId/series"
             filters.find { it is TypeSelect }?.state == 1 -> "readlists"
-            filters.find { it is TypeSelect }?.state == 2 -> "books"
+            filters.find { it is TypeSelect }?.state == 2 -> "chapters"
             else -> "series"
         }
 
-        val url = "$baseUrl/api/v1/catalog".toHttpUrl().newBuilder()
+        val url = "$baseUrl/api/v1/mihon".toHttpUrl().newBuilder()
             .addPathSegments(type)
             .addQueryParameter("search", query)
             .addQueryParameter("page", (page - 1).toString())
@@ -184,8 +165,8 @@ open class MangaVault(private val suffix: String = "") :
     private fun processSeriesPage(response: Response, baseUrl: String): MangasPage {
         val data = if (response.isFromReadList()) {
             response.parseAs<PageWrapperDto<ReadListDto>>()
-        } else if (response.isFromBook()) {
-            response.parseAs<PageWrapperDto<BookDto>>()
+        } else if (response.isFromChapter()) {
+            response.parseAs<PageWrapperDto<MihonChapterDto>>()
         } else {
             response.parseAs<PageWrapperDto<SeriesDto>>()
         }
@@ -194,15 +175,14 @@ open class MangaVault(private val suffix: String = "") :
     }
 
     override fun getMangaUrl(manga: SManga) = manga.url
-        .replace("/api/v1/catalog", "")
-        .replace("/api/v1", "")
+        .replace("/api/v1/mihon", "")
 
-    override fun mangaDetailsRequest(manga: SManga) = GET(manga.url.toCatalogApiUrl(), headers)
+    override fun mangaDetailsRequest(manga: SManga) = GET(manga.url, headers)
 
     override fun mangaDetailsParse(response: Response): SManga = if (response.isFromReadList()) {
         response.parseAs<ReadListDto>().toSManga(baseUrl)
-    } else if (response.isFromBook()) {
-        response.parseAs<BookDto>().toSManga(baseUrl)
+    } else if (response.isFromChapter()) {
+        response.parseAs<MihonChapterDto>().toSManga(baseUrl)
     } else {
         response.parseAs<SeriesDto>().toSManga(baseUrl)
     }
@@ -210,33 +190,34 @@ open class MangaVault(private val suffix: String = "") :
     private val chapterNameTemplate
         get() = preferences.getString(PREF_CHAPTER_NAME_TEMPLATE, PREF_CHAPTER_NAME_TEMPLATE_DEFAULT)!!
 
-    override fun getChapterUrl(chapter: SChapter) = chapter.url.replace("/api/v1/catalog/books", "/book")
+    override fun getChapterUrl(chapter: SChapter) = chapter.url.replace("/api/v1/mihon/chapters", "/chapters")
 
     override fun chapterListRequest(manga: SManga): Request = when {
-        manga.url.isFromBook() -> GET("${manga.url.toCatalogApiUrl()}?unpaged=true&media_status=READY&deleted=false", headers)
-        else -> GET("${manga.url.toCatalogApiUrl()}/books?unpaged=true&media_status=READY&deleted=false", headers)
+        manga.url.isFromChapter() -> GET(manga.url, headers)
+        else -> GET("${manga.url}/chapters?unpaged=true&media_status=READY&deleted=false", headers)
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        if (response.isFromBook()) {
-            val book = response.parseAs<BookDto>()
+        if (response.isFromChapter()) {
+            val chapter = response.parseAs<MihonChapterDto>()
             return listOf(
                 SChapter.create().apply {
                     chapter_number = 1F
-                    url = "$baseUrl/api/v1/catalog/books/${book.id}"
-                    name = book.getChapterName(chapterNameTemplate, isFromReadList = true)
-                    scanlator = book.metadata.authors
+                    url = "$baseUrl/api/v1/mihon/chapters/${chapter.id}"
+                    name = chapter.getChapterName(chapterNameTemplate, isFromReadList = true)
+                    scanlator = chapter.metadata.authors
                         .filter { it.role == "translator" }
                         .joinToString { it.name }
                     date_upload = when {
-                        book.metadata.releaseDate != null -> parseDate(book.metadata.releaseDate)
-                        book.created != null -> parseDateTime(book.created)
-                        else -> parseDateTime(book.fileLastModified)
+                        chapter.metadata.releaseDate != null -> parseDate(chapter.metadata.releaseDate)
+                        chapter.created != null -> parseDateTime(chapter.created)
+                        chapter.fileLastModified != null -> parseDateTime(chapter.fileLastModified)
+                        else -> 0L
                     }
                 },
             )
         }
-        val page = response.parseAs<PageWrapperDto<BookDto>>().content
+        val page = response.parseAs<PageWrapperDto<MihonChapterDto>>().content
         val isFromReadList = response.isFromReadList()
         val chapterNameTemplate = chapterNameTemplate
 
@@ -247,7 +228,7 @@ open class MangaVault(private val suffix: String = "") :
             .mapIndexed { index, book ->
                 SChapter.create().apply {
                     chapter_number = if (!isFromReadList) book.metadata.numberSort else index + 1F
-                    url = "$baseUrl/api/v1/catalog/books/${book.id}"
+                    url = "$baseUrl/api/v1/mihon/chapters/${book.id}"
                     name = book.getChapterName(chapterNameTemplate, isFromReadList)
                     scanlator = book.metadata.authors
                         .filter { it.role == "translator" }
@@ -257,10 +238,12 @@ open class MangaVault(private val suffix: String = "") :
 
                         book.created != null -> parseDateTime(book.created)
 
-                        // XXX: `Book.fileLastModified` actually uses the server's running timezone,
+                        // XXX: `fileLastModified` may use the server's running timezone,
                         // not UTC, even if the timestamp ends with a Z! We cannot determine the
                         // server's timezone, which is why this is a last resort option.
-                        else -> parseDateTime(book.fileLastModified)
+                        book.fileLastModified != null -> parseDateTime(book.fileLastModified)
+
+                        else -> 0L
                     }
                 }
             }
@@ -270,17 +253,12 @@ open class MangaVault(private val suffix: String = "") :
     override fun pageListRequest(chapter: SChapter) = GET("${chapter.url}/pages", headers)
 
     override fun pageListParse(response: Response): List<Page> {
-        val pages = response.parseAs<List<PageDto>>()
+        val pages = response.parseAs<List<MihonPageDto>>()
 
         return pages.map {
-            val url = "${response.request.url}/${it.number}" +
-                if (!SUPPORTED_IMAGE_TYPES.contains(it.mediaType)) {
-                    "?convert=png"
-                } else {
-                    ""
-                }
+            val url = it.imageUrl ?: error("Missing imageUrl for page ${it.number}")
 
-            Page(it.number, imageUrl = url)
+            Page(it.number, imageUrl = url.withConversionIfNeeded(it.mediaType))
         }
     }
 
@@ -383,33 +361,6 @@ open class MangaVault(private val suffix: String = "") :
             key = PREF_ADDRESS,
             restartRequired = true,
         )
-        // API key preference (takes precedence over username/password)
-        screen.addEditTextPreference(
-            title = "API key",
-            default = "",
-            summary = if (apiKey.isBlank()) "Optional: Use an API key for authentication" else "*".repeat(apiKey.length),
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
-            key = PREF_API_KEY,
-            restartRequired = true,
-        )
-        // Only show username/password if API key is not set
-        if (apiKey.isBlank()) {
-            screen.addEditTextPreference(
-                title = "Username",
-                default = "",
-                summary = username.ifBlank { "The user account email" },
-                key = PREF_USERNAME,
-                restartRequired = true,
-            )
-            screen.addEditTextPreference(
-                title = "Password",
-                default = "",
-                summary = if (password.isBlank()) "The user account password" else "*".repeat(password.length),
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
-                key = PREF_PASSWORD,
-                restartRequired = true,
-            )
-        }
 
         MultiSelectListPreference(screen.context).apply {
             key = PREF_DEFAULT_LIBRARIES
@@ -490,20 +441,20 @@ open class MangaVault(private val suffix: String = "") :
 
         scope.launch {
             try {
-                libraries = client.newCall(GET("$baseUrl/api/v1/libraries", headers)).await().parseAs()
-                collections = client
-                    .newCall(GET("$baseUrl/api/v1/catalog/collections?unpaged=true", headers))
+                val health = client.newCall(GET("$baseUrl/api/v1/mihon/health", headers)).await().parseAs<MihonHealthDto>()
+                check(health.version >= 1) { "Unsupported MangaVault Mihon API version ${health.version}" }
+
+                val filterOptions = client
+                    .newCall(GET("$baseUrl/api/v1/mihon/filter-options", headers))
                     .await()
-                    .parseAs<PageWrapperDto<CollectionDto>>()
-                    .content
-                genres = client.newCall(GET("$baseUrl/api/v1/catalog/genres", headers)).await().parseAs()
-                tags = client.newCall(GET("$baseUrl/api/v1/catalog/tags", headers)).await().parseAs()
-                publishers = client.newCall(GET("$baseUrl/api/v1/catalog/publishers", headers)).await().parseAs()
-                authors = client
-                    .newCall(GET("$baseUrl/api/v1/catalog/authors", headers))
-                    .await()
-                    .parseAs<List<AuthorDto>>()
-                    .groupBy { it.role }
+                    .parseAs<MihonFilterOptionsDto>()
+
+                libraries = filterOptions.libraries
+                collections = filterOptions.collections
+                genres = filterOptions.genres
+                tags = filterOptions.tags
+                publishers = filterOptions.publishers
+                authors = filterOptions.authors.groupBy { it.role }
                 fetchFilterStatus = FetchFilterStatus.FETCHED
             } catch (e: Exception) {
                 fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
@@ -512,20 +463,30 @@ open class MangaVault(private val suffix: String = "") :
         }
     }
 
-    fun String.isFromReadList() = contains("/api/v1/catalog/readlists") || contains("/api/v1/readlists")
+    fun String.isFromReadList() = contains("/api/v1/mihon/readlists")
 
-    fun String.isFromBook() = contains("/api/v1/catalog/books")
-
-    fun String.toCatalogApiUrl() = when {
-        contains("/api/v1/catalog/") -> this
-        contains("/api/v1/series/") -> replace("/api/v1/series/", "/api/v1/catalog/series/")
-        contains("/api/v1/readlists/") -> replace("/api/v1/readlists/", "/api/v1/catalog/readlists/")
-        else -> this
-    }
+    fun String.isFromChapter() = contains("/api/v1/mihon/chapters")
 
     fun Response.isFromReadList() = request.url.toString().isFromReadList()
 
-    fun Response.isFromBook() = request.url.toString().isFromBook()
+    fun Response.isFromChapter() = request.url.toString().isFromChapter()
+
+    private fun String.withConversionIfNeeded(mediaType: String): String {
+        if (SUPPORTED_IMAGE_TYPES.contains(mediaType)) {
+            return this
+        }
+
+        val parsed = toHttpUrlOrNull() ?: return if (contains("?")) "$this&convert=png" else "$this?convert=png"
+
+        if (parsed.queryParameter("convert") != null) {
+            return this
+        }
+
+        return parsed.newBuilder()
+            .addQueryParameter("convert", "png")
+            .build()
+            .toString()
+    }
 
     private inline fun <reified T> Response.parseAs(): T = json.decodeFromString(body.string())
 
@@ -551,9 +512,6 @@ private val PREF_EXTRA_SOURCES_ENTRIES = (0..10).map { it.toString() }.toTypedAr
 
 private const val PREF_DISPLAY_NAME = "Source display name"
 private const val PREF_ADDRESS = "Address"
-private const val PREF_USERNAME = "Username"
-private const val PREF_PASSWORD = "Password"
-private const val PREF_API_KEY = "API key"
 private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
 private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({size})"
