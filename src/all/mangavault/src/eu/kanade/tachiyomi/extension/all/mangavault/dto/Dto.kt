@@ -89,6 +89,7 @@ class BookDto(
     val seriesId: String,
     val seriesTitle: String,
     val name: String,
+    val chapterSuffix: String = "",
     val number: Float,
     val created: String?,
     val lastModified: String?,
@@ -102,6 +103,7 @@ class BookDto(
         val values = hashMapOf(
             "title" to metadata.title,
             "seriesTitle" to seriesTitle,
+            "suffix" to chapterSuffix,
             "number" to metadata.number,
             "createdDate" to created,
             "releaseDate" to metadata.releaseDate,

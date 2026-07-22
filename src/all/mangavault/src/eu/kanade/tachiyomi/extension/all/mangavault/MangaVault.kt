@@ -429,6 +429,7 @@ open class MangaVault(private val suffix: String = "") :
         val values = hashMapOf(
             "title" to "",
             "seriesTitle" to "",
+            "suffix" to "",
             "number" to "",
             "createdDate" to "",
             "releaseDate" to "",
@@ -449,6 +450,7 @@ open class MangaVault(private val suffix: String = "") :
             |Supported placeholders:
             |- {title}: Chapter name
             |- {seriesTitle}: Series name
+            |- {suffix}: Chapter suffix
             |- {number}: Chapter number
             |- {createdDate}: Chapter creation date
             |- {releaseDate}: Chapter release date
