@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.all.mangavault
 
 import android.content.SharedPreferences
+import android.os.SystemClock
 import android.text.InputType
 import android.util.Log
 import android.widget.Toast
@@ -32,6 +33,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.utils.getPreferencesLazy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -45,6 +47,7 @@ import org.apache.commons.text.StringSubstitutor
 import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 open class MangaVault(private val suffix: String = "") :
     HttpSource(),
@@ -438,31 +441,55 @@ open class MangaVault(private val suffix: String = "") :
             return
         }
 
+        val now = SystemClock.elapsedRealtime()
+        filterOptionsCache[baseUrl]?.takeIf { it.expiresAt > now }?.let {
+            applyFilterOptions(it.value)
+            return
+        }
+        if (!filterOptionsFetches.add(baseUrl)) {
+            return
+        }
+
         fetchFilterStatus = FetchFilterStatus.FETCHING
         fetchFiltersAttempts++
 
         scope.launch {
             try {
-                val health = client.newCall(GET("$baseUrl/api/v1/mihon/health", headers)).await().parseAs<MihonHealthDto>()
+                val healthRequest = async {
+                    client.newCall(GET("$baseUrl/api/v1/mihon/health", headers)).await().parseAs<MihonHealthDto>()
+                }
+                val optionsRequest = async {
+                    client
+                        .newCall(GET("$baseUrl/api/v1/mihon/filter-options", headers))
+                        .await()
+                        .parseAs<MihonFilterOptionsDto>()
+                }
+                val health = healthRequest.await()
                 check(health.version >= 1) { "Unsupported MangaVault Mihon API version ${health.version}" }
 
-                val filterOptions = client
-                    .newCall(GET("$baseUrl/api/v1/mihon/filter-options", headers))
-                    .await()
-                    .parseAs<MihonFilterOptionsDto>()
-
-                libraries = filterOptions.libraries
-                collections = filterOptions.collections
-                genres = filterOptions.genres
-                tags = filterOptions.tags
-                publishers = filterOptions.publishers
-                authors = filterOptions.authors.groupBy { it.role }
-                fetchFilterStatus = FetchFilterStatus.FETCHED
+                val filterOptions = optionsRequest.await()
+                filterOptionsCache[baseUrl] = CachedFilterOptions(
+                    filterOptions,
+                    SystemClock.elapsedRealtime() + FILTER_OPTIONS_CACHE_TTL,
+                )
+                applyFilterOptions(filterOptions)
             } catch (e: Exception) {
                 fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
                 Log.e(logTag, "Failed to fetch filtering options", e)
+            } finally {
+                filterOptionsFetches.remove(baseUrl)
             }
         }
+    }
+
+    private fun applyFilterOptions(filterOptions: MihonFilterOptionsDto) {
+        libraries = filterOptions.libraries
+        collections = filterOptions.collections
+        genres = filterOptions.genres
+        tags = filterOptions.tags
+        publishers = filterOptions.publishers
+        authors = filterOptions.authors.groupBy { it.role }
+        fetchFilterStatus = FetchFilterStatus.FETCHED
     }
 
     fun String.isFromReadList() = contains("/api/v1/mihon/readlists")
@@ -501,8 +528,17 @@ open class MangaVault(private val suffix: String = "") :
         internal const val TYPE_SERIES = "Series"
         internal const val TYPE_READLISTS = "Read lists"
         internal const val TYPE_BOOKS = "Books"
+
+        private const val FILTER_OPTIONS_CACHE_TTL = 5 * 60 * 1000L
+        private val filterOptionsCache = ConcurrentHashMap<String, CachedFilterOptions>()
+        private val filterOptionsFetches = ConcurrentHashMap.newKeySet<String>()
     }
 }
+
+private data class CachedFilterOptions(
+    val value: MihonFilterOptionsDto,
+    val expiresAt: Long,
+)
 
 private enum class FetchFilterStatus {
     NOT_FETCHED,
